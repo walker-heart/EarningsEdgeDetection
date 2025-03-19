@@ -15,7 +15,7 @@ git clone [repository-url]
 cd EarningsEdgeDetection/cli_scanner
 ```
  
-2. Create and activate a virtual environment (recommended):
+2. Create and activate a virtual environment (not required, I personally don't but generally it is recommended):
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
