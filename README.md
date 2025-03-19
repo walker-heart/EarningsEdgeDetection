@@ -48,6 +48,7 @@ The scanner applies the following filters:
  
 ### Mandatory Checks
  Options availability: Must have options chain
+ 
  Core analysis: Must complete successfully
  
 ### Standard Filters
