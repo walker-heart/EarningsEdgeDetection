@@ -64,7 +64,7 @@ Each filter has pass/fail criteria and some have "near miss" ranges:
    - Near Miss: 1,000,000 - 1,499,999
    - Fail: < 1,000,000
  
-3. Market Chameleon Overestimate
+3. Market Chameleon Overestimate (how often was selling earnings volatility profitable in the past 2-3 years on this stock)
    - Pass: ≥ 40%
    - Fail: < 40%
  
