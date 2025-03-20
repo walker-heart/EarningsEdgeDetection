@@ -31,7 +31,8 @@ pip install -r requirements.txt
    - Ensure you have Google Chrome installed on your system
   
     
-5. Also install webdriver_manager:
+5. Also install webdriver_manager (this you must do manually via the following command):
+   
       ```pip install webdriver-manager```
  
 ## Usage
