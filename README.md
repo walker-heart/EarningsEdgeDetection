@@ -31,7 +31,11 @@ pip install -r requirements.txt
    - Ensure you have Google Chrome installed on your system
  
 ## Usage
- 
+
+Prerequisite:
+
+Make sure (within the cli_scanner folder) you run ```chmod +x ./run.sh``` before proceeding so that you don't run into a permissions issue
+
 Basic usage:
 ```bash
 ./run.sh
