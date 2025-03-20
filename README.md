@@ -29,6 +29,10 @@ pip install -r requirements.txt
 4. Install Chrome WebDriver (required for Market Chameleon scraping):
    - The script will automatically download the appropriate ChromeDriver version
    - Ensure you have Google Chrome installed on your system
+  
+    
+5. Also install webdriver_manager:
+      ```pip install webdriver-manager```
  
 ## Usage
 
