@@ -98,13 +98,13 @@ The scanner outputs two categories:
    - Pass all other criteria
  
 For each stock, the following metrics are displayed:
- Current price
- 30-day average volume
- Market Chameleon overestimate percentage
- IV/RV ratio
- Term structure (volatility curve slope)
- Number of available options expirations
- Next options expiration date
+ * Current price
+ * 30-day average volume
+ * Market Chameleon overestimate percentage
+ * IV/RV ratio
+ * Term structure (volatility curve slope)
+ * Number of available options expirations
+ * Next options expiration date
  
 ## Time-Based Logic
  
