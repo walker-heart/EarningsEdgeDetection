@@ -1,11 +1,15 @@
 # EarningsEdgeDetection
 
 ## Features
- Automatically determines relevant earnings dates based on current time
- Scans both post-market and pre-market earnings announcements
- Applies multiple filtering criteria for stock selection
- Identifies both recommended stocks and "near miss" candidates
- Provides detailed metrics for each stock
+ * Automatically determines relevant earnings dates based on current time
+ 
+ * Scans both post-market and pre-market earnings announcements
+ 
+ * Applies multiple filtering criteria for stock selection
+ 
+ * Identifies both recommended stocks and "near miss" candidates
+ 
+ * Provides detailed metrics for each stock
  
 ## Installation
  
