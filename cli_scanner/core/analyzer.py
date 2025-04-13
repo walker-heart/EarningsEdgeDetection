@@ -183,6 +183,8 @@ class OptionsAnalyzer:
                 'avg_volume': avg_volume >= 1_500_000,
                 'iv30_rv30': iv30 / hist_vol if hist_vol > 0 else 9999,
                 'term_slope': slope,
+                'term_structure_valid': slope <= -0.004,
+                'term_structure_tier2': -0.006 < slope <= -0.004,
                 'expected_move': f"{(straddle/current_price*100):.2f}%" if straddle else "N/A",
                 'current_price': current_price,
                 'ticker': ticker,

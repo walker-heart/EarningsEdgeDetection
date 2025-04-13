@@ -3,9 +3,11 @@ Earnings scanner that handles date logic and filtering.
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 import pytz
 import requests
@@ -31,6 +33,14 @@ class EarningsScanner:
         self.batch_size = 10
         self.eastern_tz = pytz.timezone('US/Eastern')
         self.current_input_date = None
+        
+    def __del__(self):
+        # Clean up browser when scanner is destroyed
+        if hasattr(self, '_driver') and self._driver is not None:
+            try:
+                self._driver.quit()
+            except:
+                pass
     
     def get_scan_dates(self, input_date: Optional[str] = None) -> Tuple[datetime.date, datetime.date]:
         if input_date:
@@ -100,44 +110,73 @@ class EarningsScanner:
         
         return stocks
 
-    def check_mc_overestimate(self, ticker: str) -> float:
+    _driver = None  # Reusable browser instance
+    
+    def check_mc_overestimate(self, ticker: str) -> Dict[str, any]:
+            
         from selenium.webdriver.chrome.service import Service
         from webdriver_manager.chrome import ChromeDriverManager
         
-        options = webdriver.ChromeOptions()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--remote-debugging-port=9222')
-        options.add_argument('user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
-        
-        driver = None
-        try:
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=options)
-            url = f"https://marketchameleon.com/Overview/{ticker}/Earnings/Earnings-Charts/"
-            driver.get(url)
+        # Initialize browser once and reuse
+        if self._driver is None:
+            options = webdriver.ChromeOptions()
+            options.add_argument('--headless')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--disable-extensions')
+            options.add_argument('--disable-infobars')
+            options.add_argument('--blink-settings=imagesEnabled=false')  # Disable images
+            options.add_argument('--js-flags=--expose-gc')  # Optimize JS memory
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
             
-            wait = WebDriverWait(driver, 20)
+            service = Service(ChromeDriverManager().install())
+            self._driver = webdriver.Chrome(service=service, options=options)
+        
+        try:
+            # Set shorter timeouts
+            self._driver.set_page_load_timeout(15)
+            url = f"https://marketchameleon.com/Overview/{ticker}/Earnings/Earnings-Charts/"
+            self._driver.get(url)
+            
+            wait = WebDriverWait(self._driver, 10)  # Reduced timeout
             section = wait.until(
                 EC.presence_of_element_located((By.CLASS_NAME, "symbol-section-header-descr"))
             )
             
+            # Default results
+            win_rate = 0.0
+            quarters = 0
+            
+            # Extract both the percentage and quarters data
             spans = section.find_elements(By.TAG_NAME, "span")
             for span in spans:
                 if "overestimated" in span.text:
+                    # Extract the percentage
                     strong = span.find_element(By.TAG_NAME, "strong")
-                    return float(strong.text.strip('%'))
+                    win_rate = float(strong.text.strip('%'))
+                    
+                    # Extract the quarters by parsing the text after the percentage
+                    text = span.text
+                    quarters_pattern = r"in the last (\d+) quarters"
+                    quarters_match = re.search(quarters_pattern, text)
+                    if quarters_match:
+                        quarters = int(quarters_match.group(1))
+                    break
             
-            return 0.0
+            return {
+                'win_rate': win_rate,
+                'quarters': quarters
+            }
             
         except Exception as e:
             logger.warning(f"Error getting MC data for {ticker}: {e}")
-            return 0.0
-        finally:
-            if driver:
-                driver.quit()
+            return {
+                'win_rate': 0.0,
+                'quarters': 0
+            }
+        # Don't quit the driver, reuse it
 
     def validate_stock(self, stock: Dict) -> Dict:
         ticker = stock['ticker']
@@ -149,21 +188,58 @@ class EarningsScanner:
         try:
             yf_ticker = yf.Ticker(ticker)
             
-            # Mandatory check: options availability
+            # Price check (first and fastest)
+            current_price = yf_ticker.history(period='1d')['Close'].iloc[-1]
+                
+            metrics['price'] = current_price
+            if current_price < 10.0:
+                return {
+                    'pass': False,
+                    'near_miss': False,
+                    'reason': f"Price ${current_price:.2f} < $10.00",
+                    'metrics': {'price': current_price}
+                }
+
+            # Options availability and expiration check
             options_dates = yf_ticker.options
-            if not yf_ticker.options:
+            if not options_dates:
                 return {
                     'pass': False,
                     'near_miss': False,
                     'reason': "No options available",
-                    'metrics': {}
+                    'metrics': {'price': current_price}
                 }
-                
-            metrics['options_expirations'] = len(options_dates)
-            metrics['next_expiration'] = options_dates[0] if options_dates else "None"
+
+            # Check expiration date
+            first_expiry = datetime.strptime(options_dates[0], "%Y-%m-%d").date()
+            days_to_expiry = (first_expiry - datetime.now().date()).days
+            if days_to_expiry > 9:
+                return {
+                    'pass': False,
+                    'near_miss': False,
+                    'reason': f"Next expiration too far: {days_to_expiry} days",
+                    'metrics': {'price': current_price, 'days_to_expiry': days_to_expiry}
+                }
+
+            # Check open interest
+            chain = yf_ticker.option_chain(options_dates[0])
+            total_oi = chain.calls['openInterest'].sum() + chain.puts['openInterest'].sum()
+            if total_oi < 1000:
+                return {
+                    'pass': False,
+                    'near_miss': False,
+                    'reason': f"Insufficient open interest: {total_oi}",
+                    'metrics': {'price': current_price, 'open_interest': total_oi}
+                }
+            
+            metrics.update({
+                'open_interest': total_oi,
+                'days_to_expiry': days_to_expiry
+            })
             
             # Mandatory check: core analysis
             analysis = self.analyzer.compute_recommendation(ticker)
+                
             if "error" in analysis:
                 return {
                     'pass': False,
@@ -183,36 +259,90 @@ class EarningsScanner:
                 
             # Volume check
             avg_volume = yf_ticker.history(period='1mo')['Volume'].mean()
+                
             metrics['volume'] = avg_volume
             if avg_volume < 1_000_000:
                 failed_checks.append(f"Volume {avg_volume:,.0f} < 1M")
             elif avg_volume < 1_500_000:
                 near_miss_checks.append(f"Volume {avg_volume:,.0f} < 1.5M") 
 
-            # Market Chameleon check
-            time.sleep(2)
-            mc_pct = self.check_mc_overestimate(ticker)
-            metrics['mc_overestimate'] = mc_pct
-            if mc_pct < 40.0:  # Changed this to fail if under 40%
-                failed_checks.append(f"MC overestimate {mc_pct}% < 40%")
+            # Market Chameleon check - only if we haven't failed already
+            if not failed_checks:  # Skip if already failing other checks
+                mc_data = self.check_mc_overestimate(ticker)
+                win_rate = mc_data['win_rate']
+                quarters = mc_data['quarters']
+                
+                # Store both percentage and quarters in metrics
+                metrics['win_rate'] = win_rate
+                metrics['win_quarters'] = quarters
+                
+                # Apply the new threshold of 50%
+                if win_rate < 50.0:
+                    if win_rate >= 40.0:  # Between 40-50% is now a near miss
+                        near_miss_checks.append(f"Winrate {win_rate}% < 50% (over {quarters} earnings)")
+                    else:  # Below 40% is still a failure
+                        failed_checks.append(f"Winrate {win_rate}% < 40% (over {quarters} earnings)")
+            else:
+                # Add placeholders if we skip
+                metrics['win_rate'] = 0.0
+                metrics['win_quarters'] = 0
             
-            # IV/RV check
+            # IV/RV and term structure check
             iv_rv_ratio = analysis.get('iv30_rv30', 0)
+            term_slope = analysis.get('term_slope', 0)
             metrics['iv_rv_ratio'] = iv_rv_ratio
-            metrics['term_structure'] = analysis.get('term_slope', 0)
+            metrics['term_structure'] = term_slope
+
+            # Term structure check is a hard filter for all categories
+            if term_slope > -0.004:
+                failed_checks.append(f"Term structure {term_slope:.4f} > -0.004")
+
             if iv_rv_ratio < 1.0:
                 failed_checks.append(f"IV/RV ratio {iv_rv_ratio:.2f} < 1.0")
             elif iv_rv_ratio < 1.25:
                 near_miss_checks.append(f"IV/RV ratio {iv_rv_ratio:.2f} < 1.25")
+
+            # Determine final categorization
+            if term_slope > -0.004:
+                failed_checks.append(f"Term structure {term_slope:.4f} > -0.004")
             
-            # A stock is a near-miss if it has exactly one failure and that failure is in the near-miss range
-            is_near_miss = len(failed_checks) == 0 and len(near_miss_checks) == 1
+            # Is this a passing stock (original criteria)?
+            is_passing = len(failed_checks) == 0 and len(near_miss_checks) == 0
+            
+            # Is this a near miss with good term structure?
+            is_near_miss_good_term = (len(failed_checks) == 0 and 
+                                      len(near_miss_checks) > 0 and 
+                                      term_slope <= -0.006)
+            
+            # Assign tiers:
+            # - Tier 1: Original "recommended" stocks (passing all criteria)
+            # - Tier 2: Near misses with term structure <= -0.006
+            # - Near misses: The rest (term structure must still be <= -0.004)
+            if is_passing:
+                tier = 1
+                metrics['tier'] = 1
+                is_tier2 = False
+                is_near_miss = False
+            elif is_near_miss_good_term:
+                tier = 2
+                metrics['tier'] = 2
+                is_tier2 = True
+                is_near_miss = False
+            else:
+                tier = 0
+                metrics['tier'] = 0
+                is_tier2 = False
+                is_near_miss = len(failed_checks) == 0  # Only a near miss if it only fails non-critical checks
 
             return {
-                'pass': len(failed_checks) == 0 and len(near_miss_checks) == 0,
-                'near_miss': len(failed_checks) == 0 and len(near_miss_checks) == 1,
+                'pass': is_passing or is_tier2,  # Both Tier 1 and Tier 2 pass
+                'tier': tier,
+                'near_miss': is_near_miss,
                 'reason': " | ".join(failed_checks) if failed_checks else (
-                    " | ".join(near_miss_checks) if near_miss_checks else "Passed all criteria"
+                    " | ".join(near_miss_checks) if near_miss_checks else 
+                    "Tier 1 Trade" if is_passing else 
+                    "Tier 2 Trade" if is_tier2 else 
+                    "Near Miss"
                 ),
                 'metrics': metrics
             }
@@ -226,43 +356,69 @@ class EarningsScanner:
                 'reason': f"Validation error: {str(e)}"
             }
 
-    def scan_earnings(self, input_date: Optional[str] = None) -> Tuple[List[str], List[Tuple[str, str]], Dict[str, Dict]]:
+    def scan_earnings(self, input_date: Optional[str] = None, workers: int = 0) -> Tuple[List[str], List[Tuple[str, str]], Dict[str, Dict]]:
         self.current_input_date = input_date
         post_date, pre_date = self.get_scan_dates(input_date)
         
-        post_stocks = self.fetch_earnings_data(post_date)
-        pre_stocks = self.fetch_earnings_data(pre_date)
+        # Fetch earnings data in parallel
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            post_future = executor.submit(self.fetch_earnings_data, post_date)
+            pre_future = executor.submit(self.fetch_earnings_data, pre_date)
+            post_stocks = post_future.result()
+            pre_stocks = pre_future.result()
         
         candidates = []
-        for stock in post_stocks:
-            if stock['timing'] == 'Post Market':
-                candidates.append(stock)
-        
-        for stock in pre_stocks:
-            if stock['timing'] == 'Pre Market':
-                candidates.append(stock)
+        # Filter candidates (using list comprehensions for speed)
+        candidates = [s for s in post_stocks if s['timing'] == 'Post Market'] + \
+                     [s for s in pre_stocks if s['timing'] == 'Pre Market']
         
         logger.info(f"Found {len(candidates)} initial candidates")
         
         recommended = []
         near_misses = []
         stock_metrics = {}
-        batches = [candidates[i:i+self.batch_size] 
-                  for i in range(0, len(candidates), self.batch_size)]
         
-        with tqdm(total=len(candidates), desc="Analyzing stocks") as pbar:
-            for batch in batches:
-                for stock in batch:
-                    result = self.validate_stock(stock)
-                    if result['pass']:
-                        recommended.append(stock['ticker'])
-                        stock_metrics[stock['ticker']] = result['metrics']
-                    elif result['near_miss']:
-                        near_misses.append((stock['ticker'], result['reason']))
-                        stock_metrics[stock['ticker']] = result['metrics']
-                    pbar.update(1)
+        # Process in parallel if workers specified
+        if workers > 0:
+            logger.info(f"Using parallel processing with {workers} workers")
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                # Submit all stocks for processing
+                futures = [executor.submit(self.validate_stock, stock) for stock in candidates]
                 
-                if batch != batches[-1]:
-                    time.sleep(15)
+                # Process results as they complete
+                with tqdm(total=len(candidates), desc="Analyzing stocks") as pbar:
+                    for i, future in enumerate(futures):
+                        stock = candidates[i]
+                        ticker = stock['ticker']
+                        result = future.result()
+                        
+                        if result['pass']:
+                            recommended.append(ticker)
+                            stock_metrics[ticker] = result['metrics']
+                        elif result['near_miss']:
+                            near_misses.append((ticker, result['reason']))
+                            stock_metrics[ticker] = result['metrics']
+                        pbar.update(1)
+        else:
+            # Original batched sequential processing
+            batches = [candidates[i:i+self.batch_size] 
+                      for i in range(0, len(candidates), self.batch_size)]
+            
+            with tqdm(total=len(candidates), desc="Analyzing stocks") as pbar:
+                for batch in batches:
+                    for stock in batch:
+                        result = self.validate_stock(stock)
+                        ticker = stock['ticker']
+                        
+                        if result['pass']:
+                            recommended.append(ticker)
+                            stock_metrics[ticker] = result['metrics']
+                        elif result['near_miss']:
+                            near_misses.append((ticker, result['reason']))
+                            stock_metrics[ticker] = result['metrics']
+                        pbar.update(1)
+                    
+                    if batch != batches[-1]:
+                        time.sleep(5)  # Reduced sleep time
         
         return recommended, near_misses, stock_metrics

@@ -27,6 +27,12 @@ def main():
              'If not provided, uses current date logic.',
         type=str
     )
+    parser.add_argument(
+        '--parallel', '-p',
+        help='Enable parallel processing with specified number of workers',
+        type=int,
+        default=0
+    )
     args = parser.parse_args()
  
     setup_logging(log_dir="logs")
@@ -48,22 +54,38 @@ def main():
     scanner = EarningsScanner()
  
     try:
-        recommended, near_misses, stock_metrics = scanner.scan_earnings(input_date)
+        recommended, near_misses, stock_metrics = scanner.scan_earnings(
+            input_date=input_date,
+            workers=args.parallel
+        )
         if recommended or near_misses:
             print("\n=== SCAN RESULTS ===")
             
-            print("\nRECOMMENDED STOCKS:")
-            if recommended:
-                for ticker in recommended:
+            print("\nTIER 1 RECOMMENDED TRADES:")
+            tier1_tickers = [t for t in recommended if stock_metrics[t].get('tier', 1) == 1]
+            if tier1_tickers:
+                for ticker in tier1_tickers:
                     metrics = stock_metrics[ticker]
                     print(f"\n  {ticker}:")
                     print(f"    Price: ${metrics['price']:.2f}")
                     print(f"    Volume: {metrics['volume']:,.0f}")
-                    print(f"    MC Overestimate: {metrics['mc_overestimate']:.1f}%")
+                    print(f"    Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
                     print(f"    IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
                     print(f"    Term Structure: {metrics['term_structure']:.3f}")
-                    print(f"    Options Expirations: {metrics['options_expirations']}")
-                    print(f"    Next Expiration: {metrics['next_expiration']}")
+            else:
+                print("  None")
+            
+            print("\nTIER 2 RECOMMENDED TRADES:")
+            tier2_tickers = [t for t in recommended if stock_metrics[t].get('tier', 1) == 2]
+            if tier2_tickers:
+                for ticker in tier2_tickers:
+                    metrics = stock_metrics[ticker]
+                    print(f"\n  {ticker}:")
+                    print(f"    Price: ${metrics['price']:.2f}")
+                    print(f"    Volume: {metrics['volume']:,.0f}")
+                    print(f"    Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
+                    print(f"    IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
+                    print(f"    Term Structure: {metrics['term_structure']:.3f}")
             else:
                 print("  None")
  
@@ -76,11 +98,9 @@ def main():
                     print(f"    Metrics:")
                     print(f"      Price: ${metrics['price']:.2f}")
                     print(f"      Volume: {metrics['volume']:,.0f}")
-                    print(f"      MC Overestimate: {metrics['mc_overestimate']:.1f}%")
+                    print(f"      Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
                     print(f"      IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
                     print(f"      Term Structure: {metrics['term_structure']:.3f}")
-                    print(f"      Options Expirations: {metrics['options_expirations']}")
-                    print(f"      Next Expiration: {metrics['next_expiration']}")
             else:
                 print("  None")
             
