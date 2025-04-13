@@ -248,6 +248,17 @@ class EarningsScanner:
                     'metrics': {}
                 }
             
+            # Term structure check (immediate exit - this is a hard filter)
+            term_slope = analysis.get('term_slope', 0)
+            metrics['term_structure'] = term_slope
+            if term_slope > -0.004:
+                return {
+                    'pass': False,
+                    'near_miss': False,
+                    'reason': f"Term structure {term_slope:.4f} > -0.004",
+                    'metrics': metrics
+                }
+            
             # Non-mandatory checks with near-miss ranges
             # Price check
             current_price = yf_ticker.history(period='1d')['Close'].iloc[-1]
@@ -287,15 +298,9 @@ class EarningsScanner:
                 metrics['win_rate'] = 0.0
                 metrics['win_quarters'] = 0
             
-            # IV/RV and term structure check
+            # IV/RV check
             iv_rv_ratio = analysis.get('iv30_rv30', 0)
-            term_slope = analysis.get('term_slope', 0)
             metrics['iv_rv_ratio'] = iv_rv_ratio
-            metrics['term_structure'] = term_slope
-
-            # Term structure check is a hard filter for all categories
-            if term_slope > -0.004:
-                failed_checks.append(f"Term structure {term_slope:.4f} > -0.004")
 
             if iv_rv_ratio < 1.0:
                 failed_checks.append(f"IV/RV ratio {iv_rv_ratio:.2f} < 1.0")
@@ -303,8 +308,6 @@ class EarningsScanner:
                 near_miss_checks.append(f"IV/RV ratio {iv_rv_ratio:.2f} < 1.25")
 
             # Determine final categorization
-            if term_slope > -0.004:
-                failed_checks.append(f"Term structure {term_slope:.4f} > -0.004")
             
             # Is this a passing stock (original criteria)?
             is_passing = len(failed_checks) == 0 and len(near_miss_checks) == 0
