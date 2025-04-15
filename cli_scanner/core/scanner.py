@@ -224,7 +224,7 @@ class EarningsScanner:
             # Check open interest
             chain = yf_ticker.option_chain(options_dates[0])
             total_oi = chain.calls['openInterest'].sum() + chain.puts['openInterest'].sum()
-            if total_oi < 1000:
+            if total_oi < 2000:
                 return {
                     'pass': False,
                     'near_miss': False,
