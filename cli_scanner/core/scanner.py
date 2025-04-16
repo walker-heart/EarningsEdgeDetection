@@ -46,6 +46,143 @@ class EarningsScanner:
             except Exception as e:
                 # Just silently ignore errors during cleanup
                 pass
+                
+    def calculate_iron_fly_strikes(self, ticker: str) -> Dict[str, any]:
+        """
+        Calculate recommended iron fly strikes based on options closest to 50 delta.
+        
+        Returns a dictionary containing:
+        - short_call_strike: Strike price of the short call (near 50 delta)
+        - short_put_strike: Strike price of the short put (near 50 delta)
+        - long_call_strike: Strike price of the long call (wing)
+        - long_put_strike: Strike price of the long put (wing)
+        - short_call_premium: Premium received for short call
+        - short_put_premium: Premium received for short put
+        - total_credit: Total credit received for the short strikes
+        - wing_width: The width used for the wings (3x credit)
+        """
+        try:
+            # Get ticker data
+            ticker_obj = yf.Ticker(ticker)
+            if not ticker_obj.options or len(ticker_obj.options) == 0:
+                return {"error": "No options available"}
+            
+            # Get the nearest expiration
+            expiry = ticker_obj.options[0]
+            
+            # Get the options chain
+            opt_chain = ticker_obj.option_chain(expiry)
+            calls = opt_chain.calls
+            puts = opt_chain.puts
+            
+            # Current price
+            current_price = ticker_obj.history(period='1d')['Close'].iloc[-1]
+            
+            # Check if delta column exists
+            if 'delta' in calls.columns and 'delta' in puts.columns:
+                # Find call closest to 50 delta (absolute value)
+                calls['delta_diff'] = abs(abs(calls['delta']) - 0.5)
+                closest_call = calls.loc[calls['delta_diff'].idxmin()]
+                short_call_strike = closest_call['strike']
+                short_call_premium = (closest_call['bid'] + closest_call['ask']) / 2
+                
+                # Find put closest to 50 delta (absolute value)
+                puts['delta_diff'] = abs(abs(puts['delta']) - 0.5)
+                closest_put = puts.loc[puts['delta_diff'].idxmin()]
+                short_put_strike = closest_put['strike']
+                short_put_premium = (closest_put['bid'] + closest_put['ask']) / 2
+            else:
+                # If delta not available, use strike closest to current price
+                # Find call closest to ATM
+                calls['price_diff'] = abs(calls['strike'] - current_price)
+                closest_call = calls.loc[calls['price_diff'].idxmin()]
+                short_call_strike = closest_call['strike']
+                short_call_premium = (closest_call['bid'] + closest_call['ask']) / 2
+                
+                # Find put closest to ATM
+                puts['price_diff'] = abs(puts['strike'] - current_price)
+                closest_put = puts.loc[puts['price_diff'].idxmin()]
+                short_put_strike = closest_put['strike']
+                short_put_premium = (closest_put['bid'] + closest_put['ask']) / 2
+            
+            # Calculate total credit
+            total_credit = short_call_premium + short_put_premium
+            
+            # Calculate wing width - 3x the credit received
+            wing_width = 3 * total_credit
+            
+            # Calculate wing strikes
+            long_put_strike = short_put_strike - wing_width
+            long_call_strike = short_call_strike + wing_width
+            
+            # Find actual option strikes that are closest to calculated wings
+            available_put_strikes = sorted(puts['strike'].unique())
+            available_call_strikes = sorted(calls['strike'].unique())
+            
+            # Find closest available strikes for wings
+            long_put_strike = min(available_put_strikes, key=lambda x: abs(x - long_put_strike))
+            long_call_strike = min(available_call_strikes, key=lambda x: abs(x - long_call_strike))
+            
+            # Find prices for long positions
+            long_put_option = puts[puts['strike'] == long_put_strike].iloc[0]
+            long_call_option = calls[calls['strike'] == long_call_strike].iloc[0]
+            long_put_premium = round((long_put_option['bid'] + long_put_option['ask']) / 2, 2)
+            long_call_premium = round((long_call_option['bid'] + long_call_option['ask']) / 2, 2)
+            
+            # Calculate actual wing widths
+            put_wing_width = short_put_strike - long_put_strike
+            call_wing_width = long_call_strike - short_call_strike
+            
+            # Calculate max profit and max risk
+            total_debit = long_put_premium + long_call_premium
+            net_credit = total_credit - total_debit
+            max_profit = net_credit
+            max_risk = min(put_wing_width, call_wing_width) - net_credit
+            
+            # Calculate break-even points
+            upper_breakeven = short_call_strike + net_credit
+            lower_breakeven = short_put_strike - net_credit
+            
+            # Calculate risk-reward ratio
+            risk_reward_ratio = round(max_risk / max_profit, 1) if max_profit > 0 else float('inf')
+            
+            # Round values for display
+            short_call_strike = round(short_call_strike, 2)
+            short_put_strike = round(short_put_strike, 2)
+            long_call_strike = round(long_call_strike, 2)
+            long_put_strike = round(long_put_strike, 2)
+            short_call_premium = round(short_call_premium, 2)
+            short_put_premium = round(short_put_premium, 2)
+            total_credit = round(total_credit, 2)
+            put_wing_width = round(put_wing_width, 2)
+            call_wing_width = round(call_wing_width, 2)
+            max_profit = round(max_profit, 2)
+            max_risk = round(max_risk, 2)
+            
+            return {
+                "short_call_strike": short_call_strike,
+                "short_put_strike": short_put_strike,
+                "long_call_strike": long_call_strike,
+                "long_put_strike": long_put_strike,
+                "short_call_premium": short_call_premium,
+                "short_put_premium": short_put_premium,
+                "long_call_premium": long_call_premium,
+                "long_put_premium": long_put_premium,
+                "total_credit": round(total_credit, 2),
+                "total_debit": round(total_debit, 2),
+                "net_credit": round(net_credit, 2),
+                "put_wing_width": put_wing_width,
+                "call_wing_width": call_wing_width,
+                "max_profit": max_profit,
+                "max_risk": max_risk,
+                "upper_breakeven": round(upper_breakeven, 2),
+                "lower_breakeven": round(lower_breakeven, 2),
+                "risk_reward_ratio": risk_reward_ratio,
+                "expiration": expiry
+            }
+        except Exception as e:
+            logger.warning(f"Error calculating iron fly for {ticker}: {e}")
+            return {"error": str(e)}
     
     def get_scan_dates(self, input_date: Optional[str] = None) -> Tuple[datetime.date, datetime.date]:
         if input_date:
@@ -64,6 +201,59 @@ class EarningsScanner:
 
         return post_date, pre_date
 
+    def _get_fallback_earnings_data(self, date: datetime.date) -> List[Dict]:
+        """
+        Fallback method to get earnings data when the primary source fails.
+        Uses Yahoo Finance API as a backup source.
+        """
+        logger.info(f"Using fallback earnings data source for {date}")
+        try:
+            import yfinance as yf
+            from yahooquery import Screener
+            
+            # Format date for Yahoo Finance
+            formatted_date = date.strftime("%Y-%m-%d")
+            
+            # Get earnings calendar from yahooquery
+            s = Screener()
+            calendar = s.get_calendar(formatted_date, formatted_date)
+            
+            stocks = []
+            for entry in calendar['earnings'].get('rows', []):
+                try:
+                    ticker = entry.get('ticker')
+                    if not ticker:
+                        continue
+                        
+                    # Determine timing
+                    timing_str = entry.get('startdatetime', '')
+                    if timing_str:
+                        time_part = timing_str.split('T')[1] if 'T' in timing_str else ''
+                        hour = int(time_part.split(':')[0]) if ':' in time_part else 0
+                        
+                        if hour < 9:  # Before 9 AM
+                            timing = 'Pre Market'
+                        elif hour >= 16:  # After 4 PM
+                            timing = 'Post Market'
+                        else:
+                            timing = 'During Market'
+                    else:
+                        timing = 'Unknown'
+                    
+                    stocks.append({'ticker': ticker, 'timing': timing})
+                except Exception as e:
+                    logger.debug(f"Error processing calendar entry: {e}")
+            
+            logger.info(f"Found {len(stocks)} earnings reports from fallback source")
+            return stocks
+            
+        except ImportError:
+            logger.warning("yahooquery not installed, using minimal fallback data")
+            return []
+        except Exception as e:
+            logger.warning(f"Error in fallback earnings data: {e}")
+            return []
+    
     def fetch_earnings_data(self, date: datetime.date) -> List[Dict]:
         url = "https://www.investing.com/earnings-calendar/Service/getCalendarFilteredData"
         headers = {
@@ -81,10 +271,32 @@ class EarningsScanner:
             'limit_from': 0
         }
         
-        response = requests.post(url, headers=headers, data=payload)
-        data = response.json()
-        
-        soup = BeautifulSoup(data['data'], 'html.parser')
+        try:
+            # Add a user-agent rotation to avoid blocking
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
+            ]
+            import random
+            headers['User-Agent'] = random.choice(user_agents)
+            
+            response = requests.post(url, headers=headers, data=payload, timeout=10)
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            
+            # Try to parse JSON response
+            data = response.json()
+            
+            # Check if data has the expected structure
+            if 'data' not in data:
+                logger.warning("Invalid response format from Investing.com API")
+                return self._get_fallback_earnings_data(date)
+                
+            soup = BeautifulSoup(data['data'], 'html.parser')
+        except (requests.RequestException, ValueError) as e:
+            logger.error(f"Error fetching earnings data: {e}")
+            return self._get_fallback_earnings_data(date)
         rows = soup.find_all('tr')
         
         stocks = []
@@ -333,19 +545,25 @@ class EarningsScanner:
                 }
                 
             # Check ATM option deltas to ensure they are not too far from 0.5
+            # Only perform this check if delta values are available
             call_delta = analysis.get('atm_call_delta')
             put_delta = analysis.get('atm_put_delta')
             
+            # Skip this check if either delta is None (not available from Yahoo Finance API)
             if call_delta is not None and put_delta is not None:
-                # Call delta should be <= 0.57 (not too deep ITM)
-                # Put delta should be >= -0.57 (absolute value <= 0.57)
-                if call_delta > 0.57 or abs(put_delta) > 0.57:
-                    return {
-                        'pass': False,
-                        'near_miss': False,
-                        'reason': f"ATM options have delta > 0.57 (call: {call_delta:.2f}, put: {put_delta:.2f})",
-                        'metrics': metrics
-                    }
+                try:
+                    # Call delta should be <= 0.57 (not too deep ITM)
+                    # Put delta should be >= -0.57 (absolute value <= 0.57)
+                    if call_delta > 0.57 or abs(put_delta) > 0.57:
+                        return {
+                            'pass': False,
+                            'near_miss': False,
+                            'reason': f"ATM options have delta > 0.57 (call: {call_delta:.2f}, put: {put_delta:.2f})",
+                            'metrics': metrics
+                        }
+                except (TypeError, ValueError):
+                    # Skip delta check if we can't process the values
+                    logger.debug(f"Skipping delta check for {ticker}: invalid delta values")
             
             # Check for minimum expected move of $1.00
             expected_move_pct = analysis.get('expected_move', 'N/A')
