@@ -699,7 +699,11 @@ class EarningsScanner:
                 logger.info(f"Current SPY IV/RV ratio: {spy_iv_rv:.2f}")
                 
                 # Three-tiered threshold system based on market conditions
-                if spy_iv_rv <= 0.85:  # Extreme low volatility
+                if spy_iv_rv <= 0.75:  # Severe low volatility (new tier)
+                    self.iv_rv_pass_threshold = 0.90  # Relaxed by 0.35
+                    self.iv_rv_near_miss_threshold = 0.65  # Relaxed by 0.35
+                    logger.info(f"Market IV/RV is severely low ({spy_iv_rv:.2f}). Relaxing IV/RV thresholds by 0.35")
+                elif spy_iv_rv <= 0.85:  # Extreme low volatility
                     self.iv_rv_pass_threshold = 1.00  # Relaxed by 0.25
                     self.iv_rv_near_miss_threshold = 0.75  # Relaxed by 0.25
                     logger.info(f"Market IV/RV is extremely low ({spy_iv_rv:.2f}). Relaxing IV/RV thresholds by 0.25")
