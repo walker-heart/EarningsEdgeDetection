@@ -33,6 +33,11 @@ def main():
         type=int,
         default=0
     )
+    parser.add_argument(
+        '--list', '-l',
+        help='Show compact output with only ticker symbols and tiers',
+        action='store_true'
+    )
     args = parser.parse_args()
  
     setup_logging(log_dir="logs")
@@ -61,51 +66,58 @@ def main():
         if recommended or near_misses:
             print("\n=== SCAN RESULTS ===")
             
-            print("\nTIER 1 RECOMMENDED TRADES:")
+            # Get tickers by tier
             tier1_tickers = [t for t in recommended if stock_metrics[t].get('tier', 1) == 1]
-            if tier1_tickers:
-                for ticker in tier1_tickers:
-                    metrics = stock_metrics[ticker]
-                    print(f"\n  {ticker}:")
-                    print(f"    Price: ${metrics['price']:.2f}")
-                    print(f"    Volume: {metrics['volume']:,.0f}")
-                    print(f"    Expected Move: ${metrics.get('expected_move_dollars', 0):.2f}")
-                    print(f"    Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
-                    print(f"    IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
-                    print(f"    Term Structure: {metrics['term_structure']:.3f}")
-            else:
-                print("  None")
-            
-            print("\nTIER 2 RECOMMENDED TRADES:")
             tier2_tickers = [t for t in recommended if stock_metrics[t].get('tier', 1) == 2]
-            if tier2_tickers:
-                for ticker in tier2_tickers:
-                    metrics = stock_metrics[ticker]
-                    print(f"\n  {ticker}:")
-                    print(f"    Price: ${metrics['price']:.2f}")
-                    print(f"    Volume: {metrics['volume']:,.0f}")
-                    print(f"    Expected Move: ${metrics.get('expected_move_dollars', 0):.2f}")
-                    print(f"    Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
-                    print(f"    IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
-                    print(f"    Term Structure: {metrics['term_structure']:.3f}")
+            
+            # Compact output mode
+            if args.list:
+                print("\nTIER 1:", ", ".join(tier1_tickers) if tier1_tickers else "None")
+                print("TIER 2:", ", ".join(tier2_tickers) if tier2_tickers else "None")
+                print("NEAR MISSES:", ", ".join([t for t, _ in near_misses]) if near_misses else "None")
+            
+            # Normal detailed output mode
             else:
-                print("  None")
- 
-            print("\nNEAR MISSES:")
-            if near_misses:
-                for ticker, reason in near_misses:
-                    metrics = stock_metrics[ticker]
-                    print(f"\n  {ticker}:")
-                    print(f"    Failed: {reason}")
-                    print(f"    Metrics:")
-                    print(f"      Price: ${metrics['price']:.2f}")
-                    print(f"      Volume: {metrics['volume']:,.0f}")
-                    print(f"      Expected Move: ${metrics.get('expected_move_dollars', 0):.2f}")
-                    print(f"      Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
-                    print(f"      IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
-                    print(f"      Term Structure: {metrics['term_structure']:.3f}")
-            else:
-                print("  None")
+                print("\nTIER 1 RECOMMENDED TRADES:")
+                if tier1_tickers:
+                    for ticker in tier1_tickers:
+                        metrics = stock_metrics[ticker]
+                        print(f"\n  {ticker}:")
+                        print(f"    Price: ${metrics['price']:.2f}")
+                        print(f"    Volume: {metrics['volume']:,.0f}")
+                        print(f"    Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
+                        print(f"    IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
+                        print(f"    Term Structure: {metrics['term_structure']:.3f}")
+                else:
+                    print("  None")
+                
+                print("\nTIER 2 RECOMMENDED TRADES:")
+                if tier2_tickers:
+                    for ticker in tier2_tickers:
+                        metrics = stock_metrics[ticker]
+                        print(f"\n  {ticker}:")
+                        print(f"    Price: ${metrics['price']:.2f}")
+                        print(f"    Volume: {metrics['volume']:,.0f}")
+                        print(f"    Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
+                        print(f"    IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
+                        print(f"    Term Structure: {metrics['term_structure']:.3f}")
+                else:
+                    print("  None")
+     
+                print("\nNEAR MISSES:")
+                if near_misses:
+                    for ticker, reason in near_misses:
+                        metrics = stock_metrics[ticker]
+                        print(f"\n  {ticker}:")
+                        print(f"    Failed: {reason}")
+                        print(f"    Metrics:")
+                        print(f"      Price: ${metrics['price']:.2f}")
+                        print(f"      Volume: {metrics['volume']:,.0f}")
+                        print(f"      Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
+                        print(f"      IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
+                        print(f"      Term Structure: {metrics['term_structure']:.3f}")
+                else:
+                    print("  None")
             
             print("\n")
         else:

@@ -11,9 +11,17 @@ elif (( WORKERS > 6 )); then
   WORKERS=6
 fi
 
+# Check for list flag
+LIST_FLAG=""
+if [[ "$*" == *"-l"* || "$*" == *"--list"* ]]; then
+  LIST_FLAG="--list"
+fi
+
 # Run the scanner with parallel processing
 if [ -z "$1" ]; then
-  python3 scanner.py --parallel $WORKERS
+  python3 scanner.py --parallel $WORKERS $LIST_FLAG
+elif [[ "$1" == "-l" || "$1" == "--list" ]]; then
+  python3 scanner.py --parallel $WORKERS --list
 else
-  python3 scanner.py --date "$1" --parallel $WORKERS
+  python3 scanner.py --date "$1" --parallel $WORKERS $LIST_FLAG
 fi
