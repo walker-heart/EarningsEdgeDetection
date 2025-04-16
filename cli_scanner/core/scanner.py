@@ -33,6 +33,8 @@ class EarningsScanner:
         self.batch_size = 10
         self.eastern_tz = pytz.timezone('US/Eastern')
         self.current_input_date = None
+        self.iv_rv_pass_threshold = 1.25  # Default threshold
+        self.iv_rv_near_miss_threshold = 1.0  # Default threshold
         self._driver = None
         self._driver_lock = None
         
@@ -408,10 +410,11 @@ class EarningsScanner:
             iv_rv_ratio = analysis.get('iv30_rv30', 0)
             metrics['iv_rv_ratio'] = iv_rv_ratio
 
-            if iv_rv_ratio < 1.0:
-                failed_checks.append(f"IV/RV ratio {iv_rv_ratio:.2f} < 1.0")
-            elif iv_rv_ratio < 1.25:
-                near_miss_checks.append(f"IV/RV ratio {iv_rv_ratio:.2f} < 1.25")
+            # Use dynamic thresholds based on market conditions
+            if iv_rv_ratio < self.iv_rv_near_miss_threshold:
+                failed_checks.append(f"IV/RV ratio {iv_rv_ratio:.2f} < {self.iv_rv_near_miss_threshold}")
+            elif iv_rv_ratio < self.iv_rv_pass_threshold:
+                near_miss_checks.append(f"IV/RV ratio {iv_rv_ratio:.2f} < {self.iv_rv_pass_threshold}")
 
             # Determine final categorization
             
@@ -465,8 +468,44 @@ class EarningsScanner:
                 'reason': f"Validation error: {str(e)}"
             }
 
+    def adjust_thresholds_based_on_spy(self):
+        """
+        Check SPY's current IV/RV ratio and adjust thresholds if market IV is low.
+        If SPY IV/RV <= 1.1, reduce thresholds by 0.1.
+        """
+        try:
+            # Calculate SPY's IV/RV
+            spy_analysis = self.analyzer.compute_recommendation('SPY')
+            if 'error' not in spy_analysis:
+                spy_iv_rv = spy_analysis.get('iv30_rv30', 0)
+                logger.info(f"Current SPY IV/RV ratio: {spy_iv_rv:.2f}")
+                
+                # Three-tiered threshold system based on market conditions
+                if spy_iv_rv <= 0.85:  # Extreme low volatility
+                    self.iv_rv_pass_threshold = 1.00  # Relaxed by 0.25
+                    self.iv_rv_near_miss_threshold = 0.75  # Relaxed by 0.25
+                    logger.info(f"Market IV/RV is extremely low ({spy_iv_rv:.2f}). Relaxing IV/RV thresholds by 0.25")
+                elif spy_iv_rv <= 1.0:  # Moderately low volatility
+                    self.iv_rv_pass_threshold = 1.10  # Relaxed by 0.15
+                    self.iv_rv_near_miss_threshold = 0.85  # Relaxed by 0.15
+                    logger.info(f"Market IV/RV is low ({spy_iv_rv:.2f}). Relaxing IV/RV thresholds by 0.15")
+                else:  # Normal market conditions
+                    logger.info(f"Normal market IV/RV ({spy_iv_rv:.2f}). Using standard thresholds")
+                
+                logger.info(f"Current IV/RV thresholds - Pass: {self.iv_rv_pass_threshold}, Near Miss: {self.iv_rv_near_miss_threshold}")
+            else:
+                logger.warning(f"Could not calculate SPY IV/RV: {spy_analysis.get('error')}")
+                logger.info(f"Using standard IV/RV thresholds - Pass: {self.iv_rv_pass_threshold}, Near Miss: {self.iv_rv_near_miss_threshold}")
+        except Exception as e:
+            logger.warning(f"Error calculating SPY IV/RV: {e}")
+            logger.info(f"Using standard IV/RV thresholds - Pass: {self.iv_rv_pass_threshold}, Near Miss: {self.iv_rv_near_miss_threshold}")
+            
     def scan_earnings(self, input_date: Optional[str] = None, workers: int = 0) -> Tuple[List[str], List[Tuple[str, str]], Dict[str, Dict]]:
         self.current_input_date = input_date
+        
+        # Adjust IV/RV thresholds based on market conditions
+        self.adjust_thresholds_based_on_spy()
+        
         post_date, pre_date = self.get_scan_dates(input_date)
         
         # Fetch earnings data in parallel
