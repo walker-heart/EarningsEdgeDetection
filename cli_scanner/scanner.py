@@ -43,6 +43,30 @@ def main():
         help='Calculate and display recommended iron fly strikes',
         action='store_true'
     )
+    parser.add_argument(
+        '--analyze', '-a',
+        help='Analyze a specific ticker symbol and display all metrics regardless of pass/fail status',
+        type=str,
+        metavar='TICKER'
+    )
+    parser.add_argument(
+        '--use-finnhub', '-f',
+        help=argparse.SUPPRESS,  # Hide from help
+        action='store_true'
+    )
+    # Combined sources flag - new preferred approach
+    parser.add_argument(
+        '--all-sources', '-c',
+        help='Use all available earnings data sources (Investing.com, Finnhub, DoltHub) and combine results',
+        action='store_true'
+    )
+    
+    # Keep these flags for backward compatibility
+    parser.add_argument(
+        '--use-dolthub', '-u',
+        help=argparse.SUPPRESS,  # Hide from help
+        action='store_true'
+    )
     args = parser.parse_args()
  
     setup_logging(log_dir="logs")
@@ -63,10 +87,101 @@ def main():
  
     scanner = EarningsScanner()
  
+    # Check if we're analyzing a specific ticker instead of running a full scan
+    if args.analyze:
+        ticker = args.analyze.strip().upper()
+        print(f"\n=== ANALYZING {ticker} ===\n")
+        
+        # Analyze the ticker and get all metrics
+        metrics = scanner.analyze_ticker(ticker)
+        
+        if 'error' in metrics:
+            print(f"Error analyzing {ticker}: {metrics['error']}")
+            return
+        
+        # Format the results for display
+        print(f"SPY IV/RV: {metrics.get('spy_iv_rv', 'N/A'):.2f}")
+        print(f"Current thresholds - Pass: {metrics.get('iv_rv_pass_threshold', 1.25):.2f}, "
+              f"Near Miss: {metrics.get('iv_rv_near_miss_threshold', 1.0):.2f}\n")
+        
+        # Print status
+        status = "PASS - "
+        if metrics.get('pass', False):
+            if metrics.get('tier', 0) == 1:
+                status += "TIER 1"
+            elif metrics.get('tier', 0) == 2:
+                status += "TIER 2"
+            else:
+                status += "PASS"
+        elif metrics.get('near_miss', False):
+            status = "NEAR MISS"
+        else:
+            status = "FAIL"
+        
+        print(f"Status: {status}")
+        print(f"Reason: {metrics.get('reason', 'N/A')}\n")
+        
+        # Print all available metrics
+        print("CORE METRICS:")
+        if 'price' in metrics:
+            print(f"  Price: ${metrics['price']:.2f}")
+        if 'volume' in metrics:
+            print(f"  Volume: {metrics['volume']:,.0f}")
+        if 'term_structure' in metrics:
+            print(f"  Term Structure: {metrics['term_structure']:.4f}")
+        if 'iv_rv_ratio' in metrics:
+            print(f"  IV/RV Ratio: {metrics['iv_rv_ratio']:.2f}")
+        if 'win_rate' in metrics and 'win_quarters' in metrics:
+            print(f"  Winrate: {metrics['win_rate']:.1f}% over the last {metrics['win_quarters']} earnings")
+        
+        # Print additional metrics if available
+        print("\nADDITIONAL METRICS:")
+        for key, value in metrics.items():
+            # Skip metrics we already displayed or internal metrics
+            if key in ['price', 'volume', 'term_structure', 'iv_rv_ratio', 'win_rate', 'win_quarters',
+                       'pass', 'near_miss', 'tier', 'reason', 'iv_rv_pass_threshold', 
+                       'iv_rv_near_miss_threshold', 'spy_iv_rv']:
+                continue
+                
+            # Format numbers nicely
+            if isinstance(value, float):
+                print(f"  {key}: {value:.4f}")
+            else:
+                print(f"  {key}: {value}")
+        
+        # Calculate and display iron fly strikes if flag is set
+        if args.iron_fly:
+            print("\nIRON FLY STRATEGY:")
+            iron_fly = scanner.calculate_iron_fly_strikes(ticker)
+            if "error" not in iron_fly:
+                print(f"  Expiration: {iron_fly['expiration']}")
+                
+                # Line 1: Short options and premium
+                print(f"  SHORT: ${iron_fly['short_put_strike']} Put (${iron_fly['short_put_premium']}), ")
+                print(f"         ${iron_fly['short_call_strike']} Call (${iron_fly['short_call_premium']})")
+                print(f"         Total Credit: ${iron_fly['total_credit']}")
+                
+                # Line 2: Long options and premium
+                print(f"  LONG:  ${iron_fly['long_put_strike']} Put (${iron_fly['long_put_premium']}), ")
+                print(f"         ${iron_fly['long_call_strike']} Call (${iron_fly['long_call_premium']})")
+                print(f"         Total Debit: ${iron_fly['total_debit']}")
+                
+                print(f"  Net Credit: ${iron_fly['net_credit']}")
+                print(f"  Break-even Range: ${iron_fly['lower_breakeven']} to ${iron_fly['upper_breakeven']}")
+                print(f"  Wings: ${iron_fly['put_wing_width']} Put Side, ${iron_fly['call_wing_width']} Call Side")
+                print(f"  Max Profit: ${iron_fly['max_profit']}, Max Risk: ${iron_fly['max_risk']}")
+                print(f"  Risk/Reward: 1:{iron_fly['risk_reward_ratio']}")
+            else:
+                print(f"  {iron_fly['error']}")
+        return
+        
     try:
         recommended, near_misses, stock_metrics = scanner.scan_earnings(
             input_date=input_date,
-            workers=args.parallel
+            workers=args.parallel,
+            use_finnhub=args.use_finnhub,
+            use_dolthub=args.use_dolthub,
+            all_sources=args.all_sources
         )
         if recommended or near_misses:
             print("\n=== SCAN RESULTS ===")

@@ -234,8 +234,8 @@ class EarningsScanner:
                     'use_pure': True,         # Use pure Python implementation for better stability
                     'autocommit': True,       # Avoid transaction issues
                     'get_warnings': True,     # Get warnings for better debugging
-                    'raise_on_warnings': False # Don't raise on warnings
-                    # Removed 'connection_attributes' parameter that was causing errors
+                    'raise_on_warnings': False, # Don't raise on warnings
+                    'connection_attributes': {'program_name': 'EarningsEdgeDetection'}
                 }
                 
                 conn = mysql.connector.connect(**config)
@@ -432,16 +432,6 @@ class EarningsScanner:
         return self._get_finnhub_earnings_data(date)
     
     # Initialize class variables, only one __init__ method should exist
-    def __init__(self, eastern_tz=pytz.timezone('US/Eastern')):  # Constructor with eastern timezone parameter
-        # Default parameter values initialization
-        self.eastern_tz = eastern_tz
-        self.batch_size = 8  # Default batch size
-        # Default threshold values for IV/RV ratio
-        self.iv_rv_pass_threshold = 1.25
-        self.iv_rv_near_miss_threshold = 1.0
-        # Initialize the analyzer
-        self.analyzer = OptionsAnalyzer()
-    
     def _get_combined_earnings_data(self, date: datetime.date) -> List[Dict]:
         """
         Get earnings data from all available sources and combine results.
@@ -507,52 +497,24 @@ class EarningsScanner:
             
         # Otherwise, follow the original source selection logic
         if getattr(self, 'use_dolthub', False):
-            logger.info("Using DoltHub AND Finnhub as earnings data sources")
-            
-            # Get data from both sources
-            dolthub_stocks = []
-            finnhub_stocks = []
-            
-            # Try to get DoltHub data
+            logger.info("Using DoltHub as primary earnings data source")
             try:
-                dolthub_stocks = self._get_dolthub_earnings_data(date)
-                logger.info(f"Found {len(dolthub_stocks)} stocks from DoltHub")
+                stocks = self._get_dolthub_earnings_data(date)
+                if stocks:
+                    return stocks
             except Exception as e:
                 logger.error(f"Error using DoltHub: {e}")
-            
-            # Try to get Finnhub data (regardless of whether DoltHub worked)
-            try:
-                finnhub_stocks = self._get_finnhub_earnings_data(date)
-                logger.info(f"Found {len(finnhub_stocks)} stocks from Finnhub")
-            except Exception as e:
-                logger.error(f"Error using Finnhub: {e}")
-            
-            # Combine results (simple merge with deduplication)
-            all_stocks = {}
-            
-            # Add DoltHub stocks first
-            for stock in dolthub_stocks:
-                ticker = stock['ticker']
-                all_stocks[ticker] = stock
-            
-            # Add Finnhub stocks (avoiding duplicates)
-            for stock in finnhub_stocks:
-                ticker = stock['ticker']
-                if ticker not in all_stocks:
-                    all_stocks[ticker] = stock
-                # If both have timing info, prefer non-Unknown timing
-                elif all_stocks[ticker].get('timing') == 'Unknown' and stock.get('timing') != 'Unknown':
-                    all_stocks[ticker]['timing'] = stock.get('timing')
-            
-            merged_stocks = list(all_stocks.values())
-            logger.info(f"Combined {len(dolthub_stocks)} (DoltHub) + {len(finnhub_stocks)} (Finnhub) = {len(merged_stocks)} unique stocks")
-            
-            # If we found any stocks, return them
-            if merged_stocks:
-                return merged_stocks
-            
-            # If both DoltHub and Finnhub failed, fall back to Investing.com
-            logger.info("Both DoltHub and Finnhub returned no data or failed, trying Investing.com as fallback")
+                
+            # If DoltHub fails or returns empty, fall back to other sources
+            logger.info("DoltHub returned no data or failed, trying fallback sources")
+            if getattr(self, 'use_finnhub', False):
+                logger.info("Trying Finnhub as fallback")
+                finnhub_stocks = self._get_finnhub_earnings_data(date) 
+                if finnhub_stocks:
+                    return finnhub_stocks
+                    
+            # Final fallback to Investing.com
+            logger.info("Using Investing.com as final fallback")
             return self._get_investing_earnings_data(date)
         elif getattr(self, 'use_finnhub', False):
             logger.info("Using Finnhub as primary earnings data source")
@@ -868,43 +830,25 @@ class EarningsScanner:
                 try:
                     # Call delta should be <= 0.57 (not too deep ITM)
                     # Put delta should be >= -0.57 (absolute value <= 0.57)
-                    call_delta_float = float(call_delta)
-                    put_delta_float = float(put_delta)
-                    
-                    metrics['atm_call_delta'] = call_delta_float
-                    metrics['atm_put_delta'] = put_delta_float
-                    
-                    if call_delta_float > 0.57 or abs(put_delta_float) > 0.57:
+                    if call_delta > 0.57 or abs(put_delta) > 0.57:
                         return {
                             'pass': False,
                             'near_miss': False,
-                            'reason': f"ATM options have delta > 0.57 (call: {call_delta_float:.2f}, put: {put_delta_float:.2f})",
+                            'reason': f"ATM options have delta > 0.57 (call: {call_delta:.2f}, put: {put_delta:.2f})",
                             'metrics': metrics
                         }
-                except (TypeError, ValueError) as e:
-                    # Log more details about the error
-                    logger.debug(f"Skipping delta check for {ticker}: invalid delta values - {e}. Values: call_delta={call_delta}, put_delta={put_delta}")
+                except (TypeError, ValueError):
+                    # Skip delta check if we can't process the values
+                    logger.debug(f"Skipping delta check for {ticker}: invalid delta values")
             
-            # Check for minimum expected move of $0.90
+            # Check for minimum expected move of $1.00
             expected_move_pct = analysis.get('expected_move', 'N/A')
-            
-            # Log the raw expected move value for debugging
-            logger.debug(f"Raw expected move for {ticker}: {expected_move_pct}")
-            
             if expected_move_pct != 'N/A':
                 # Parse the percentage from the string (e.g., "5.20%")
                 try:
-                    # Handle both string and numeric formats
-                    if isinstance(expected_move_pct, str):
-                        move_pct = float(expected_move_pct.strip('%')) / 100
-                    else:
-                        move_pct = float(expected_move_pct) / 100
-                        
+                    move_pct = float(expected_move_pct.strip('%')) / 100
                     expected_move_dollars = current_price * move_pct
                     metrics['expected_move_dollars'] = expected_move_dollars
-                    metrics['expected_move_pct'] = move_pct * 100
-                    
-                    logger.debug(f"Calculated expected move for {ticker}: ${expected_move_dollars:.2f} ({move_pct*100:.2f}%)")
                     
                     # Reject if expected move is less than $0.90
                     if expected_move_dollars < 0.9:
@@ -914,38 +858,8 @@ class EarningsScanner:
                             'reason': f"Expected move ${expected_move_dollars:.2f} < $0.90",
                             'metrics': metrics
                         }
-                except (ValueError, AttributeError, TypeError) as e:
-                    logger.warning(f"Could not parse expected move for {ticker}: {expected_move_pct} - Error: {e}")
-                    
-                    # As a fallback, try to calculate expected move from ATM option premiums
-                    try:
-                        if 'options_dates' in locals() and len(options_dates) > 0:
-                            chain = yf_ticker.option_chain(options_dates[0])
-                            calls, puts = chain.calls, chain.puts
-                            
-                            call_idx = (calls['strike'] - current_price).abs().idxmin()
-                            put_idx = (puts['strike'] - current_price).abs().idxmin()
-                            
-                            call_mid = (calls.loc[call_idx, 'bid'] + calls.loc[call_idx, 'ask']) / 2
-                            put_mid = (puts.loc[put_idx, 'bid'] + puts.loc[put_idx, 'ask']) / 2
-                            straddle = call_mid + put_mid
-                            
-                            # Using the straddle price as a direct estimate of expected move in dollars
-                            expected_move_dollars = straddle
-                            metrics['expected_move_dollars'] = expected_move_dollars
-                            metrics['expected_move_pct'] = (expected_move_dollars / current_price) * 100
-                            
-                            logger.info(f"Using fallback method for expected move on {ticker}: ${expected_move_dollars:.2f} ({metrics['expected_move_pct']:.2f}%)")
-                            
-                            if expected_move_dollars < 0.9:
-                                return {
-                                    'pass': False,
-                                    'near_miss': False,
-                                    'reason': f"Expected move (fallback) ${expected_move_dollars:.2f} < $0.90",
-                                    'metrics': metrics
-                                }
-                    except Exception as e2:
-                        logger.warning(f"Fallback expected move calculation also failed for {ticker}: {e2}")
+                except (ValueError, AttributeError):
+                    logger.warning(f"Could not parse expected move for {ticker}: {expected_move_pct}")
             
             # Non-mandatory checks with near-miss ranges
             # Price check
@@ -1188,11 +1102,8 @@ class EarningsScanner:
                 # Initialize with empty lists in case of errors
                 post_stocks = []
                 pre_stocks = []
-        except Exception as e:
-            logger.error(f"Error adjusting thresholds or fetching earnings data: {e}")
-            return recommended, near_misses, stock_metrics
-            
-        # Initialize candidates list properly - outside of the try block
+        
+        # Initialize candidates list properly - outside of the try-except block
         candidates = []
         # Filter candidates (using list comprehensions for speed)
         candidates = [s for s in post_stocks if s['timing'] == 'Post Market'] + \
