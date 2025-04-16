@@ -10,6 +10,7 @@ A sophisticated scanner for identifying high-probability earnings trades based o
 * Scans both post-market and pre-market earnings announcements
 * Performance optimized scanning process
 * Comprehensive metrics tracking
+* Iron fly strategy recommendations with break-even analysis
 
 ## Trade Categories
 
@@ -48,15 +49,15 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```bash
 pip install -r requirements.txt
 ```
+
+4. Install additional dependencies:
+```bash
+pip install yahooquery webdriver-manager
+```
  
-4. Install Chrome WebDriver (required for Market Chameleon scraping):
+5. Install Chrome WebDriver (required for Market Chameleon scraping):
    - The script will automatically download the appropriate ChromeDriver version
    - Ensure you have Google Chrome installed on your system
-  
-    
-5. Also install webdriver_manager (this you must do manually via the following command):
-   
-      ```pip install webdriver-manager```
  
 ## Usage
 
@@ -79,14 +80,20 @@ python scanner.py --date "04/20/2025" --parallel 4
 Optional parameters:
 - `--date`, `-d`: Specific date to scan in MM/DD/YYYY format
 - `--parallel`, `-p`: Number of worker threads (0 disables parallel processing)
+- `--list`, `-l`: Show compact output with only ticker symbols and tiers
+- `--iron-fly`, `-i`: Calculate and display recommended iron fly strikes
+
+Note, you CAN combine the -i and -l flags.
 
 ## Filtering Criteria
 
 ### Hard Filters (No Exceptions)
 - Stock price >= $10.00
 - Options expiration <= 9 days away
-- Open interest >= 1000 contracts (combined calls/puts)
+- Open interest >= 2000 contracts (combined calls/puts)
 - Term structure <= -0.004 (for ALL categories, including near misses)
+- ATM option deltas <= 0.57 in absolute value (ensures proper ATM selection)
+- Expected move >= $0.90 (minimum dollar amount for nearest expiration)
 - Options availability: Must have options chain
 - Core analysis: Must complete successfully
 
@@ -115,12 +122,32 @@ Optional parameters:
    - Near Miss: 1.00 - 1.24
    - Fail: < 1.00
 
-## Performance Optimizations in the New Version (feel free to skip to next section)
+## Iron Fly Strategy
+
+When using the `--iron-fly` or `-i` flag, the scanner will calculate recommended iron fly trades for each qualifying stock:
+
+- Selects ATM options closest to 50 delta for short strikes
+- Calculates wing widths based on 3x credit received
+- Provides detailed analysis including:
+  - Short and long strikes for puts and calls
+  - Premium received and paid
+  - Break-even price range
+  - Risk-to-reward ratio
+  - Maximum profit and maximum risk
+
+## Performance Optimizations
 
 1. **Filter Chain Ordering**
-   - do the most important filter group first
-   - exiting on any failure instead of continuing to compute all filters
-   - ordering filter execution from fastest to slowest to catch unfavorable trades quickly
+   - Price check (fastest, immediate exit)
+   - Term structure analysis (with early exit)
+   - Volume verification
+   - Options availability
+   - Expiration date check
+   - Open interest verification
+   - Delta check for ATM options
+   - Expected move minimum check
+   - Market Chameleon analysis (only performed if other checks pass)
+   - IV/RV ratio validation
 
 2. **Parallel Processing**
    - Multi-threaded stock analysis
@@ -130,22 +157,28 @@ Optional parameters:
 
 3. **Browser Efficiency**
    - Reuses single headless browser instance
-   - Faster page loading process
+   - Disables images and unnecessary components
+   - Reduced page load timeout
+   - Optimized memory usage
 
 4. **Additional Efficiency Improvements**
    - Reduced sleep time between batches (5 seconds)
-   - Conditional execution of expensive operations (skip Market Chameleon if already failed)
-   - Early exit on critical filter failures (price, expiration, term structure)
+   - Conditional execution of expensive operations
+   - Early exit on critical filter failures
    - List comprehensions for faster data filtering
+   - Fallback data sources for reliability
 
 ## Output Explanation
  
 For each stock, the following metrics are displayed:
 * Current price
 * 30-day average volume
+* Expected move (in dollars)
 * Winrate: Percentage and number of earnings periods analyzed
 * IV/RV ratio
 * Term structure (volatility curve slope)
+
+With the `--iron-fly` flag, additional trade specifics are provided.
 
 ## Time-Based Logic
  
@@ -168,11 +201,16 @@ Common issues:
  
 2. Rate limiting:
    - The script includes delays to avoid rate limiting
-   - If you see connection errors, try increasing delay times
+   - If you see connection errors, the tool now has a fallback data source
+   - Yahoo Finance API serves as a backup when Investing.com fails
  
 3. Market hours:
    - The scanner uses Eastern Time (ET) for market hours
    - Ensure your system clock is accurate
+
+4. Missing delta information:
+   - Some options may not report delta values - the scanner handles this gracefully
+   - When no delta values are available, it falls back to strike-based selection
  
 ## Logs
  
