@@ -33,13 +33,16 @@ class EarningsScanner:
         self.batch_size = 10
         self.eastern_tz = pytz.timezone('US/Eastern')
         self.current_input_date = None
+        self._driver = None
+        self._driver_lock = None
         
     def __del__(self):
         # Clean up browser when scanner is destroyed
         if hasattr(self, '_driver') and self._driver is not None:
             try:
                 self._driver.quit()
-            except:
+            except Exception as e:
+                # Just silently ignore errors during cleanup
                 pass
     
     def get_scan_dates(self, input_date: Optional[str] = None) -> Tuple[datetime.date, datetime.date]:
@@ -111,72 +114,140 @@ class EarningsScanner:
         return stocks
 
     _driver = None  # Reusable browser instance
+    _driver_lock = None  # Thread lock for browser access
+    _max_retries = 3  # Number of retry attempts for browser operations
     
-    def check_mc_overestimate(self, ticker: str) -> Dict[str, any]:
-            
+    def _initialize_browser(self):
+        """Initialize or reinitialize the browser with optimized settings"""
         from selenium.webdriver.chrome.service import Service
         from webdriver_manager.chrome import ChromeDriverManager
         
-        # Initialize browser once and reuse
-        if self._driver is None:
-            options = webdriver.ChromeOptions()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-extensions')
-            options.add_argument('--disable-infobars')
-            options.add_argument('--blink-settings=imagesEnabled=false')  # Disable images
-            options.add_argument('--js-flags=--expose-gc')  # Optimize JS memory
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
-            
-            service = Service(ChromeDriverManager().install())
-            self._driver = webdriver.Chrome(service=service, options=options)
+        # Close any existing instance first
+        if self._driver is not None:
+            try:
+                self._driver.quit()
+            except:
+                pass
+            self._driver = None
         
-        try:
-            # Set shorter timeouts
-            self._driver.set_page_load_timeout(15)
-            url = f"https://marketchameleon.com/Overview/{ticker}/Earnings/Earnings-Charts/"
-            self._driver.get(url)
+        options = webdriver.ChromeOptions()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--disable-extensions')
+        options.add_argument('--disable-infobars')
+        options.add_argument('--blink-settings=imagesEnabled=false')
+        options.add_argument('--js-flags=--expose-gc')
+        options.add_argument('--disable-dev-shm-usage')
+        
+        # Additional memory optimization
+        options.add_argument('--disable-browser-side-navigation')
+        options.add_argument('--disable-3d-apis')
+        options.add_argument('--disable-accelerated-2d-canvas')
+        options.add_argument('--disable-web-security')
+        options.add_argument('--disable-features=NetworkPrediction,PrefetchDNSOverride')
+        options.add_argument('--disable-sync')
+        options.add_argument('--mute-audio')
+        options.add_argument('--no-first-run')
+        options.add_argument('--no-default-browser-check')
+        options.add_argument('--memory-model=low')
+        options.add_argument('--disable-translate')
+        options.add_argument('--disable-plugins')
+        options.add_argument('--disable-software-rasterizer')
+        options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+        
+        service = Service(ChromeDriverManager().install())
+        self._driver = webdriver.Chrome(service=service, options=options)
+        self._driver.set_page_load_timeout(10)  # Even shorter timeout
+        
+    def check_mc_overestimate(self, ticker: str) -> Dict[str, any]:
+        """Get Market Chameleon overestimate data with retry mechanism"""
+        import threading
+        
+        # Initialize thread lock if needed
+        if self._driver_lock is None:
+            self._driver_lock = threading.Lock()
+        
+        # Default return values
+        default_result = {'win_rate': 0.0, 'quarters': 0}
+        
+        # Acquire lock for thread safety
+        with self._driver_lock:
+            # Try to initialize browser if not already running
+            if self._driver is None:
+                try:
+                    self._initialize_browser()
+                except Exception as e:
+                    logger.error(f"Failed to initialize browser: {e}")
+                    return default_result
             
-            wait = WebDriverWait(self._driver, 10)  # Reduced timeout
-            section = wait.until(
-                EC.presence_of_element_located((By.CLASS_NAME, "symbol-section-header-descr"))
-            )
-            
-            # Default results
-            win_rate = 0.0
-            quarters = 0
-            
-            # Extract both the percentage and quarters data
-            spans = section.find_elements(By.TAG_NAME, "span")
-            for span in spans:
-                if "overestimated" in span.text:
-                    # Extract the percentage
-                    strong = span.find_element(By.TAG_NAME, "strong")
-                    win_rate = float(strong.text.strip('%'))
+            # Retry loop
+            retries = 0
+            while retries < self._max_retries:
+                try:
+                    # Check if browser needs reinitializing
+                    try:
+                        # Quick test if browser is responsive
+                        self._driver.window_handles
+                    except:
+                        # Browser crashed or not responsive, reinitialize
+                        logger.info(f"Browser needs reinitializing for {ticker}")
+                        self._initialize_browser()
                     
-                    # Extract the quarters by parsing the text after the percentage
-                    text = span.text
-                    quarters_pattern = r"in the last (\d+) quarters"
-                    quarters_match = re.search(quarters_pattern, text)
-                    if quarters_match:
-                        quarters = int(quarters_match.group(1))
-                    break
+                    url = f"https://marketchameleon.com/Overview/{ticker}/Earnings/Earnings-Charts/"
+                    self._driver.get(url)
+                    
+                    wait = WebDriverWait(self._driver, 8)  # Even shorter timeout
+                    section = wait.until(
+                        EC.presence_of_element_located((By.CLASS_NAME, "symbol-section-header-descr"))
+                    )
             
-            return {
-                'win_rate': win_rate,
-                'quarters': quarters
-            }
+                    # Default results
+                    win_rate = 0.0
+                    quarters = 0
+                    
+                    # Extract both the percentage and quarters data
+                    spans = section.find_elements(By.TAG_NAME, "span")
+                    for span in spans:
+                        if "overestimated" in span.text:
+                            # Extract the percentage
+                            try:
+                                strong = span.find_element(By.TAG_NAME, "strong")
+                                win_rate = float(strong.text.strip('%'))
+                                
+                                # Extract the quarters by parsing the text after the percentage
+                                text = span.text
+                                quarters_pattern = r"in the last (\d+) quarters"
+                                quarters_match = re.search(quarters_pattern, text)
+                                if quarters_match:
+                                    quarters = int(quarters_match.group(1))
+                            except Exception as inner_e:
+                                logger.debug(f"Error extracting data for {ticker}: {inner_e}")
+                            break
+                    
+                    # Success - return the data and break the retry loop
+                    return {
+                        'win_rate': win_rate,
+                        'quarters': quarters
+                    }
+                    
+                except Exception as e:
+                    logger.warning(f"Error getting MC data for {ticker} (attempt {retries+1}/{self._max_retries}): {e}")
+                    retries += 1
+                    
+                    # Try to reinitialize browser after each failure
+                    try:
+                        self._initialize_browser()
+                    except:
+                        pass
+                    
+                    # Small delay before retry
+                    time.sleep(1)
             
-        except Exception as e:
-            logger.warning(f"Error getting MC data for {ticker}: {e}")
-            return {
-                'win_rate': 0.0,
-                'quarters': 0
-            }
-        # Don't quit the driver, reuse it
+            # If we get here, we've exhausted retries
+            logger.error(f"Failed to get MC data for {ticker} after {self._max_retries} attempts")
+            return default_result
 
     def validate_stock(self, stock: Dict) -> Dict:
         ticker = stock['ticker']
@@ -258,6 +329,41 @@ class EarningsScanner:
                     'reason': f"Term structure {term_slope:.4f} > -0.004",
                     'metrics': metrics
                 }
+                
+            # Check ATM option deltas to ensure they are not too far from 0.5
+            call_delta = analysis.get('atm_call_delta')
+            put_delta = analysis.get('atm_put_delta')
+            
+            if call_delta is not None and put_delta is not None:
+                # Call delta should be <= 0.57 (not too deep ITM)
+                # Put delta should be >= -0.57 (absolute value <= 0.57)
+                if call_delta > 0.57 or abs(put_delta) > 0.57:
+                    return {
+                        'pass': False,
+                        'near_miss': False,
+                        'reason': f"ATM options have delta > 0.57 (call: {call_delta:.2f}, put: {put_delta:.2f})",
+                        'metrics': metrics
+                    }
+            
+            # Check for minimum expected move of $1.00
+            expected_move_pct = analysis.get('expected_move', 'N/A')
+            if expected_move_pct != 'N/A':
+                # Parse the percentage from the string (e.g., "5.20%")
+                try:
+                    move_pct = float(expected_move_pct.strip('%')) / 100
+                    expected_move_dollars = current_price * move_pct
+                    metrics['expected_move_dollars'] = expected_move_dollars
+                    
+                    # Reject if expected move is less than $0.90
+                    if expected_move_dollars < 0.9:
+                        return {
+                            'pass': False,
+                            'near_miss': False,
+                            'reason': f"Expected move ${expected_move_dollars:.2f} < $0.90",
+                            'metrics': metrics
+                        }
+                except (ValueError, AttributeError):
+                    logger.warning(f"Could not parse expected move for {ticker}: {expected_move_pct}")
             
             # Non-mandatory checks with near-miss ranges
             # Price check
@@ -383,8 +489,11 @@ class EarningsScanner:
         
         # Process in parallel if workers specified
         if workers > 0:
-            logger.info(f"Using parallel processing with {workers} workers")
-            with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Limit max workers for stability (especially with browser operations)
+            effective_workers = min(workers, 8)  # Cap at 8 workers max for stability
+            logger.info(f"Using parallel processing with {effective_workers} workers")
+            
+            with ThreadPoolExecutor(max_workers=effective_workers) as executor:
                 # Submit all stocks for processing
                 futures = [executor.submit(self.validate_stock, stock) for stock in candidates]
                 
@@ -393,15 +502,19 @@ class EarningsScanner:
                     for i, future in enumerate(futures):
                         stock = candidates[i]
                         ticker = stock['ticker']
-                        result = future.result()
-                        
-                        if result['pass']:
-                            recommended.append(ticker)
-                            stock_metrics[ticker] = result['metrics']
-                        elif result['near_miss']:
-                            near_misses.append((ticker, result['reason']))
-                            stock_metrics[ticker] = result['metrics']
-                        pbar.update(1)
+                        try:
+                            result = future.result(timeout=60)  # Add timeout to prevent hanging threads
+                            
+                            if result['pass']:
+                                recommended.append(ticker)
+                                stock_metrics[ticker] = result['metrics']
+                            elif result['near_miss']:
+                                near_misses.append((ticker, result['reason']))
+                                stock_metrics[ticker] = result['metrics']
+                        except Exception as e:
+                            logger.error(f"Error processing {ticker}: {e}")
+                        finally:
+                            pbar.update(1)
         else:
             # Original batched sequential processing
             batches = [candidates[i:i+self.batch_size] 

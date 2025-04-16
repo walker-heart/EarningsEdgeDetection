@@ -157,6 +157,11 @@ class OptionsAnalyzer:
                     call_mid = (calls.loc[call_idx, 'bid'] + calls.loc[call_idx, 'ask']) / 2
                     put_mid = (puts.loc[put_idx, 'bid'] + puts.loc[put_idx, 'ask']) / 2
                     straddle = call_mid + put_mid
+                    
+                    # Get ATM deltas if available
+                    atm_call_delta = calls.loc[call_idx, 'delta'] if 'delta' in calls.columns else None
+                    atm_put_delta = puts.loc[put_idx, 'delta'] if 'delta' in puts.columns else None
+                    
                     first_chain = False
 
             if not atm_ivs:
@@ -179,7 +184,8 @@ class OptionsAnalyzer:
             # Get volume data
             avg_volume = hist_data['Volume'].rolling(30).mean().dropna().iloc[-1]
 
-            return {
+            # Check if we have deltas to return
+            result_dict = {
                 'avg_volume': avg_volume >= 1_500_000,
                 'iv30_rv30': iv30 / hist_vol if hist_vol > 0 else 9999,
                 'term_slope': slope,
@@ -190,6 +196,13 @@ class OptionsAnalyzer:
                 'ticker': ticker,
                 'recommendation': 'BUY' if iv30 < hist_vol and avg_volume >= 1_500_000 else 'SELL' if iv30 > hist_vol * 1.2 else 'HOLD'
             }
+            
+            # Add ATM deltas if available
+            if 'atm_call_delta' in locals() and 'atm_put_delta' in locals() and atm_call_delta is not None and atm_put_delta is not None:
+                result_dict['atm_call_delta'] = atm_call_delta
+                result_dict['atm_put_delta'] = atm_put_delta
+            
+            return result_dict
         except Exception as e:
             logger.error(f"Error analyzing {ticker}: {str(e)}")
             return {
