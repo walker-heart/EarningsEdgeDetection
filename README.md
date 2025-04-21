@@ -36,7 +36,7 @@ The scanner organizes results into three categories:
  
 1. Clone the repository:
 ```bash
-git clone [repository-url]
+git clone https://github.com/Jayesh-Chhabra/EarningsEdgeDetection.git
 cd EarningsEdgeDetection/cli_scanner
 ```
  
