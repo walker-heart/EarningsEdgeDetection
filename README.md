@@ -8,6 +8,7 @@ A sophisticated scanner for identifying high-probability earnings trades based o
 * Strict filtering criteria for high-quality trade selection
 * Automatically determines relevant earnings dates based on current time
 * Scans both post-market and pre-market earnings announcements
+* Multiple data sources (Investing.com, DoltHub, and Finnhub) for reliable earnings data
 * Performance optimized scanning process
 * Comprehensive metrics tracking
 * Iron fly strategy recommendations with break-even analysis
@@ -82,8 +83,8 @@ Optional parameters:
 - `--parallel`, `-p`: Number of worker threads (0 disables parallel processing)
 - `--list`, `-l`: Show compact output with only ticker symbols and tiers
 - `--iron-fly`, `-i`: Calculate and display recommended iron fly strikes
-
-Note, you CAN combine the -i and -l flags.
+- `--use-dolthub`, `-u`: Use DoltHub and Finnhub as earnings data sources (see Data Source Integrations section)
+- `--all-sources`, `-c`: Use all available earnings data sources combined
 
 ## Filtering Criteria
 
@@ -190,6 +191,85 @@ With the `--iron-fly` flag, additional trade specifics are provided.
   - Checks tomorrow's post-market earnings
   - Checks the following day's pre-market earnings
  
+## Data Source Integrations
+
+### Using the `-u` Flag (DoltHub and Finnhub)
+
+The `-u` flag enables the use of DoltHub and Finnhub as data sources for earnings calendar information, which can provide more reliable and comprehensive data:
+
+```bash
+./run.sh -u [MM/DD/YYYY]
+```
+
+or
+
+```bash
+python scanner.py -u --date "04/20/2025"
+```
+
+### Setting Up DoltHub Integration
+
+1. **Install MySQL Connector**:
+   ```bash
+   pip install mysql-connector-python
+   ```
+
+2. **Install Dolt Database**:
+   - Visit [DoltHub's installation guide](https://docs.dolthub.com/getting-started/installation) or use the following:
+
+   For macOS (using Homebrew):
+   ```bash
+   brew install dolt
+   ```
+
+   For Linux/WSL:
+   ```bash
+   sudo bash -c 'curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash'
+   ```
+
+3. **Clone the Earnings Repository**:
+   ```bash
+   dolt clone dolthub/earnings
+   cd earnings
+   ```
+
+4. **Start the MySQL Server**:
+   ```bash
+   dolt sql-server
+   ```
+   Leave this running in a separate terminal window while using the scanner.
+
+### Setting Up Finnhub Integration
+
+1. **Get a Free API Key**:
+   - Visit [Finnhub.io](https://finnhub.io/) and create a free account
+   - Go to your dashboard to get your API key
+
+2. **Set Environment Variable**:
+   ```bash
+   export FINNHUB_API_KEY="your_api_key_here"
+   ```
+
+   For persistent use, add to your shell profile (~/.bashrc, ~/.zshrc, etc.):
+   ```bash
+   echo 'export FINNHUB_API_KEY="your_api_key_here"' >> ~/.bashrc  # Or ~/.zshrc
+   source ~/.bashrc  # Or ~/.zshrc
+   ```
+
+### Using All Data Sources
+
+For maximum coverage, you can use the `-c` flag to combine all data sources (Investing.com, DoltHub, and Finnhub):
+
+```bash
+./run.sh -c [MM/DD/YYYY]
+```
+
+or
+
+```bash
+python scanner.py -c --date "04/20/2025"
+```
+
 ## Troubleshooting
  
 Common issues:
@@ -203,7 +283,7 @@ Common issues:
    - The script includes delays to avoid rate limiting
    - If you see connection errors, the tool now has a fallback data source
    - Yahoo Finance API serves as a backup when Investing.com fails
- 
+
 3. Market hours:
    - The scanner uses Eastern Time (ET) for market hours
    - Ensure your system clock is accurate
