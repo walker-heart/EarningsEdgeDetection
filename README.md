@@ -136,39 +136,6 @@ When using the `--iron-fly` or `-i` flag, the scanner will calculate recommended
   - Risk-to-reward ratio
   - Maximum profit and maximum risk
 
-## Performance Optimizations
-
-1. **Filter Chain Ordering**
-   - Price check (fastest, immediate exit)
-   - Term structure analysis (with early exit)
-   - Volume verification
-   - Options availability
-   - Expiration date check
-   - Open interest verification
-   - Delta check for ATM options
-   - Expected move minimum check
-   - Market Chameleon analysis (only performed if other checks pass)
-   - IV/RV ratio validation
-
-2. **Parallel Processing**
-   - Multi-threaded stock analysis
-   - Automatic detection of optimal thread count
-   - Configurable via --parallel flag
-   - Parallelized earnings data fetching
-
-3. **Browser Efficiency**
-   - Reuses single headless browser instance
-   - Disables images and unnecessary components
-   - Reduced page load timeout
-   - Optimized memory usage
-
-4. **Additional Efficiency Improvements**
-   - Reduced sleep time between batches (5 seconds)
-   - Conditional execution of expensive operations
-   - Early exit on critical filter failures
-   - List comprehensions for faster data filtering
-   - Fallback data sources for reliability
-
 ## Output Explanation
  
 For each stock, the following metrics are displayed:
@@ -291,6 +258,39 @@ Common issues:
 4. Missing delta information:
    - Some options may not report delta values - the scanner handles this gracefully
    - When no delta values are available, it falls back to strike-based selection
+
+## Performance Optimizations
+
+1. **Filter Chain Ordering**
+   - Price check (fastest, immediate exit)
+   - Term structure analysis (with early exit)
+   - Volume verification
+   - Options availability
+   - Expiration date check
+   - Open interest verification
+   - Delta check for ATM options
+   - Expected move minimum check
+   - Market Chameleon analysis (only performed if other checks pass)
+   - IV/RV ratio validation
+
+2. **Parallel Processing**
+   - Multi-threaded stock analysis
+   - Automatic detection of optimal thread count
+   - Configurable via --parallel flag
+   - Parallelized earnings data fetching
+
+3. **Browser Efficiency**
+   - Reuses single headless browser instance
+   - Disables images and unnecessary components
+   - Reduced page load timeout
+   - Optimized memory usage
+
+4. **Additional Efficiency Improvements**
+   - Reduced sleep time between batches (5 seconds)
+   - Conditional execution of expensive operations
+   - Early exit on critical filter failures
+   - List comprehensions for faster data filtering
+   - Fallback data sources for reliability
  
 ## Logs
  
