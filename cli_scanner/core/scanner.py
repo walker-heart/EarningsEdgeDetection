@@ -10,13 +10,15 @@ from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 import pytz
-import requests
+import requests 
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import yfinance as yf
+from curl_cffi import requests as curl_requests
+import core.yfinance_cookie_patch
 from tqdm import tqdm
 
 from .analyzer import OptionsAnalyzer
@@ -26,6 +28,9 @@ logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(handler)
+
+core.yfinance_cookie_patch.patch_yfdata_cookie_basic()
+session = curl_requests.Session(impersonate="chrome")
 
 class EarningsScanner:
     # Initialize class variables, only one __init__ method should exist
@@ -54,7 +59,7 @@ class EarningsScanner:
         """
         try:
             # Get ticker data
-            ticker_obj = yf.Ticker(ticker)
+            ticker_obj = yf.Ticker(ticker, session=session)
             if not ticker_obj.options or len(ticker_obj.options) == 0:
                 return {"error": "No options available"}
             
@@ -785,7 +790,7 @@ class EarningsScanner:
         metrics = {}
         
         try:
-            yf_ticker = yf.Ticker(ticker)
+            yf_ticker = yf.Ticker(ticker, session=session)
             
             # Price check (first and fastest)
             current_price = yf_ticker.history(period='1d')['Close'].iloc[-1]
