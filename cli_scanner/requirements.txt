@@ -10,4 +10,4 @@ tqdm>=4.66.2
 yahooquery>=2.3.7
 webdriver-manager>=4.0.0
 mysql-connector-python>=8.2.0
-curl_cffi
+curl_cffi==0.10.0

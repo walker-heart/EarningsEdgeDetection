@@ -10,18 +10,18 @@ from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 import pytz
-import requests 
+import requests
+from curl_cffi import requests as curl_requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import yfinance as yf
-from curl_cffi import requests as curl_requests
-import core.yfinance_cookie_patch
 from tqdm import tqdm
 
 from .analyzer import OptionsAnalyzer
+import core.yfinance_cookie_patch
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
