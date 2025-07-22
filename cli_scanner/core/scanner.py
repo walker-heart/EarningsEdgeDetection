@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytz
 import requests
-from curl_cffi import requests as curl_requests
+curl_requests = requests  # Alias to maintain compatibility throughout your code
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -30,7 +30,7 @@ handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)
 logger.addHandler(handler)
 
 core.yfinance_cookie_patch.patch_yfdata_cookie_basic()
-session = curl_requests.Session(impersonate="chrome")
+session = curl_requests.Session()  # No impersonate support in requests
 
 class EarningsScanner:
     # Initialize class variables, only one __init__ method should exist
